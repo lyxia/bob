@@ -11,6 +11,7 @@ import buildCommonJS from './targets/commonjs';
 import buildModule from './targets/module';
 import buildTypescript from './targets/typescript';
 import { Options } from './types';
+import {debounce} from 'lodash'
 
 const { name } = require('../package.json');
 const root = process.cwd();
@@ -132,7 +133,7 @@ yargs
           name: 'replace',
           message: `Your package.json has the '${key}' field set to '${
             pkg[key]
-          }'. Do you want to replace it with '${entry}'?`,
+            }'. Do you want to replace it with '${entry}'?`,
           default: true,
         });
 
@@ -150,7 +151,7 @@ yargs
         name: 'replace',
         message: `Your package.json has the 'scripts.prepare' field set to '${
           pkg.scripts.prepare
-        }'. Do you want to replace it with '${prepare}'?`,
+          }'. Do you want to replace it with '${prepare}'?`,
         default: true,
       });
 
@@ -165,7 +166,7 @@ yargs
     if (
       pkg.files &&
       JSON.stringify(pkg.files.slice().sort()) !==
-        JSON.stringify(files.slice().sort())
+      JSON.stringify(files.slice().sort())
     ) {
       const { replace } = await inquirer.prompt({
         type: 'confirm',
@@ -229,13 +230,17 @@ yargs
 
     logger.success('Your project is configured!');
   })
-  .command('build', 'build files for publishing', {}, async argv => {
+  .command('build', 'build files for publishing', function (yargs) {
+    return yargs.option('watch', {
+      alias: 'w',
+      default: false
+    })
+  }, async argv => {
     const result = explorer.searchSync();
-
     if (!(result && result.config)) {
       logger.exit(
         `No configuration found. Run '${
-          argv.$0
+        argv.$0
         } init' to create one automatically.`
       );
     }
@@ -280,51 +285,77 @@ yargs
       success: logger.success,
     };
 
-    for (const target of options.targets!) {
-      const targetName = Array.isArray(target) ? target[0] : target;
-      const targetOptions = Array.isArray(target) ? target[1] : undefined;
-
-      report.info(`Building target ${chalk.blue(targetName)}`);
-
-      switch (targetName) {
-        case 'aar':
-          await buildAAR({
-            root,
-            source: path.resolve(root, source as string),
-            output: path.resolve(root, output as string, 'aar'),
-            options: targetOptions,
-            report,
-          });
-          break;
-        case 'commonjs':
-          await buildCommonJS({
-            root,
-            source: path.resolve(root, source as string),
-            output: path.resolve(root, output as string, 'commonjs'),
-            options: targetOptions,
-            report,
-          });
-          break;
-        case 'module':
-          await buildModule({
-            root,
-            source: path.resolve(root, source as string),
-            output: path.resolve(root, output as string, 'module'),
-            options: targetOptions,
-            report,
-          });
-          break;
-        case 'typescript':
-          await buildTypescript({
-            root,
-            source: path.resolve(root, source as string),
-            output: path.resolve(root, output as string, 'typescript'),
-            report,
-          });
-          break;
-        default:
-          logger.exit(`Invalid target ${chalk.blue(targetName)}.`);
+    async function buildPromise() {
+      for (const target of options.targets!) {
+        const targetName = Array.isArray(target) ? target[0] : target;
+        const targetOptions = Array.isArray(target) ? target[1] : undefined;
+  
+        report.info(`Building target ${chalk.blue(targetName)}`);
+  
+        switch (targetName) {
+          case 'aar':
+            await buildAAR({
+              root,
+              source: path.resolve(root, source as string),
+              output: path.resolve(root, output as string, 'aar'),
+              options: targetOptions,
+              report,
+            });
+            break;
+          case 'commonjs':
+            await buildCommonJS({
+              root,
+              source: path.resolve(root, source as string),
+              output: path.resolve(root, output as string, 'commonjs'),
+              options: targetOptions,
+              report,
+            });
+            break;
+          case 'module':
+            await buildModule({
+              root,
+              source: path.resolve(root, source as string),
+              output: path.resolve(root, output as string, 'module'),
+              options: targetOptions,
+              report,
+            });
+            break;
+          case 'typescript':
+            const tsconfig = options.tsconfig;
+            await buildTypescript({
+              root,
+              source: path.resolve(root, source as string),
+              output: path.resolve(root, output as string, 'typescript'),
+              report,
+              tsconfig: path.resolve(root, (tsconfig || 'tsconfig.json') as string),
+            });
+            break;
+          default:
+            logger.exit(`Invalid target ${chalk.blue(targetName)}.`);
+        }
       }
+    }
+    
+    logger.info(`Start watch: ${argv.watch}`)
+    if(argv.watch) {
+      const startBuild = () => {
+        buildPromise()
+        .then(() => {
+          logger.info(`Successfully build`)
+        })
+        .catch(() => {
+          logger.info(`Failed build`)
+        })
+      }
+      startBuild()
+      const debounce_build = debounce(startBuild, 1000)
+      fs.watch(path.resolve(root, source as string), (_, filaName) => {
+        if(filaName) {
+          debounce_build()
+        }
+      })
+    } else {
+      buildPromise()
     }
   })
   .strict().argv;

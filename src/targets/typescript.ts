@@ -5,8 +5,9 @@ import fs from 'fs-extra';
 import del from 'del';
 import { platform } from 'os';
 import { Input } from '../types';
+import glob from 'glob';
 
-export default async function build({ root, output, report }: Input) {
+export default async function build({ root, source, output, report, tsconfig }: Input) {
   report.info(
     `Cleaning up previous build at ${chalk.blue(path.relative(root, output))}`
   );
@@ -15,7 +16,8 @@ export default async function build({ root, output, report }: Input) {
 
   report.info(`Generating type definitions with ${chalk.blue('tsc')}`);
 
-  const tsconfig = path.join(root, 'tsconfig.json');
+  // const tsconfig = path.join(root, 'tsconfig.json');
+  tsconfig = tsconfig || path.join(root, 'tsconfig.json')
 
   try {
     if (await fs.pathExists(tsconfig)) {
@@ -25,24 +27,29 @@ export default async function build({ root, output, report }: Input) {
         const conflicts: string[] = [];
 
         if (config.compilerOptions.noEmit !== undefined) {
-          conflicts.push('compilerOptions.noEmit');
+          conflicts.push('compilerOptions.noEmit cannot set');
         }
 
-        if (config.compilerOptions.emitDeclarationOnly !== undefined) {
-          conflicts.push('compilerOptions.emitDeclarationOnly');
-        }
+        // if (config.compilerOptions.emitDeclarationOnly !== true) {
+        //   conflicts.push('compilerOptions.emitDeclarationOnly must set true');
+        // }
 
         if (config.compilerOptions.outDir) {
-          conflicts.push('compilerOptions.outDir');
+          const configOutDir = path.resolve(root, config.compilerOptions.outDir)
+          if(configOutDir !== output) {
+            conflicts.push(`compilerOptions.outDir must set ${output}`);
+          }
+        } else {
+          conflicts.push(`compilerOptions.outDir must set ${output}`);
         }
 
-        if (config.compilerOptions.declarationDir) {
-          conflicts.push('compilerOptions.declarationDir');
-        }
+        // if (config.compilerOptions.declarationDir) {
+        //   conflicts.push('compilerOptions.declarationDir cannot set');
+        // }
 
         if (conflicts.length) {
           report.warn(
-            `Found following options in the config file which can conflict with the CLI options. Please remove them from ${chalk.blue(
+            `Found following options in the config file which can conflict with the CLI options. Please modify them from ${chalk.blue(
               'tsconfig.json'
             )}:${conflicts.reduce(
               (acc, curr) => acc + `\n${chalk.gray('-')} ${chalk.yellow(curr)}`,
@@ -63,11 +70,8 @@ export default async function build({ root, output, report }: Input) {
 
     if (await fs.pathExists(tsc)) {
       child_process.execFileSync(tsc, [
-        '--pretty',
-        '--declaration',
-        '--emitDeclarationOnly',
-        '--outDir',
-        output,
+        '--build',
+        tsconfig
       ]);
 
       report.success(
@@ -84,6 +88,28 @@ export default async function build({ root, output, report }: Input) {
         )} to your ${chalk.blue('devDependencies')}.`
       );
     }
+
+    const files = glob.sync('**/*', {
+      cwd: source,
+      absolute: true,
+      nodir: true,
+      ignore: '**/{__tests__,__fixtures__}/**',
+    });
+    await Promise.all(
+      files.map(async filepath => {
+        const outputFilename = path
+          .join(output, path.relative(source, filepath))
+          .replace(/\.(ts|tsx?)$/, '.js');
+  
+        await fs.mkdirp(path.dirname(outputFilename));
+  
+        if (!/\.(ts|tsx?)$/.test(filepath)) {
+          // Copy files which aren't source code
+          fs.copy(filepath, outputFilename);
+          return;
+        }
+      })
+    );
   } catch (e) {
     if (e.stdout) {
       report.error(

@@ -11,6 +11,7 @@ export type Input = {
   source: string;
   output: string;
   report: Report;
+  tsconfig?: string
 };
 
 export type Target = 'aar' | 'commonjs' | 'module' | 'typescript';
@@ -19,4 +20,5 @@ export type Options = {
   source?: string;
   output?: string;
   targets?: Array<Target | [Target, object]>;
+  tsconfig?: string
 };
